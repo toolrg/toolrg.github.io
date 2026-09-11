@@ -106,19 +106,31 @@ function resolveRealLink(rawLink) {
 }
 
 function extractRowLink(row) {
-  const directLink = row?.querySelector('a[href]')?.getAttribute('href')
-    || row?.getAttribute('data-link')
-    || row?.getAttribute('data-url');
+  const sourceCandidates = [
+    row?.querySelector('a[href]')?.getAttribute('href'),
+    row?.getAttribute('data-link'),
+    row?.getAttribute('data-url'),
+    row?.getAttribute('href'),
+    row?.getAttribute('onclick'),
+    row?.getAttribute('data-action'),
+  ];
 
-  if (directLink) {
-    return resolveRealLink(directLink);
+  for (const candidate of sourceCandidates) {
+    if (!candidate || typeof candidate !== 'string') {
+      continue;
+    }
+
+    const directMatch = candidate.match(/(?:abrirNovoCadastro|window\.location|document\.location|location\.href)\s*[:=]?\s*['"]([^'"]+)['"]/i)
+      || candidate.match(/(?:https?:\/\/amcin\.e-instituto\.com\.br[^\s'"'<>]+|\/[^\s'"'<>]*)/i);
+
+    const possibleLink = directMatch ? directMatch[1] || directMatch[0] : candidate;
+    const resolved = resolveRealLink(possibleLink);
+    if (resolved) {
+      return resolved;
+    }
   }
 
-  const onclick = row?.getAttribute('onclick') || '';
-  const match = onclick.match(/abrirNovoCadastro\s*\(\s*['"]([^'"]+)['"]\s*\)|document\.location\s*=\s*['"]([^'"]+)['"]/i);
-
-  const candidate = match ? (match[1] || match[2]) : null;
-  return candidate ? resolveRealLink(candidate) : null;
+  return null;
 }
 
 function parseAvailabilityHtml(html) {
@@ -242,6 +254,8 @@ function renderRows(rows) {
           window.location.assign(row.link);
         }
       });
+    } else {
+      item.title = 'Link real do agendamento não disponível neste retorno HTML.';
     }
 
     const title = document.createElement('strong');
