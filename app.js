@@ -191,23 +191,41 @@ function renderRows(rows) {
 
 async function requestAvailability(url) {
   const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  const apiBase = isLocalhost ? 'http://127.0.0.1:5500' : 'https://toolrg-backend.onrender.com';
-  const endpoint = `${apiBase}/api/check?url=${encodeURIComponent(url)}`;
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    mode: 'cors',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-    },
-  });
+  const renderApi = 'https://toolrg-github-io.onrender.com';
+  const localApi = 'http://127.0.0.1:5500';
+  const candidates = isLocalhost
+    ? [`${localApi}/api/check?url=${encodeURIComponent(url)}`]
+    : [
+        `${renderApi}/api/check?url=${encodeURIComponent(url)}`,
+        `${localApi}/api/check?url=${encodeURIComponent(url)}`,
+      ];
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+  let lastError = null;
+
+  for (const endpoint of candidates) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        mode: 'cors',
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      console.warn('Endpoint fallback triggered:', endpoint, error);
+    }
   }
 
-  return response.text();
+  throw lastError || new Error('Não foi possível consultar o endpoint de vagas.');
 }
 
 function notifyUser(message) {
@@ -262,7 +280,10 @@ async function checkNow() {
     }
   } catch (error) {
     renderRows([]);
-    updateStatus('unknown', `Erro ao consultar o endpoint: ${error.message}`);
+    const message = error && error.message
+      ? `Erro ao consultar o endpoint: ${error.message}. Use o proxy local se o Render estiver bloqueado.`
+      : 'Erro ao consultar o endpoint. Use o proxy local se o Render estiver bloqueado.';
+    updateStatus('unknown', message);
   }
 }
 

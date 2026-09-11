@@ -1,5 +1,7 @@
 import html
 import os
+import sys
+import traceback
 import urllib.parse
 import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -32,9 +34,17 @@ class AppHandler(SimpleHTTPRequestHandler):
             request = urllib.request.Request(
                 target,
                 headers={
-                    'User-Agent': 'MonitorDeVagas/1.0',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': 'https://amcin.e-instituto.com.br/agendamento/Agendamento/LoadAgendamentoDisponivel',
+                    'Origin': 'https://amcin.e-instituto.com.br',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Dest': 'document',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Connection': 'keep-alive',
                 },
             )
             with urllib.request.urlopen(request, timeout=20) as response:
@@ -48,6 +58,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(payload)
                 return
         except Exception as error:
+            print(f'Proxy upstream failure for {target}: {type(error).__name__}: {error}', file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             body = (
                 '<html><body><pre>'
                 + html.escape(str(error))
