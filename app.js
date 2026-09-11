@@ -190,7 +190,9 @@ function renderRows(rows) {
 }
 
 async function requestAvailability(url) {
-  const endpoint = `http://127.0.0.1:5500/api/check?url=${encodeURIComponent(url)}`;
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const apiBase = isLocalhost ? 'http://127.0.0.1:5500' : 'https://toolrg-backend.onrender.com';
+  const endpoint = `${apiBase}/api/check?url=${encodeURIComponent(url)}`;
   const response = await fetch(endpoint, {
     method: 'GET',
     mode: 'cors',

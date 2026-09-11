@@ -66,8 +66,9 @@ class AppHandler(SimpleHTTPRequestHandler):
 def main():
     os.chdir(ROOT)
     port = int(os.environ.get('PORT', '5500'))
-    server = ThreadingHTTPServer(('127.0.0.1', port), AppHandler)
-    print(f'Server ativo em http://127.0.0.1:{port}')
+    host = os.environ.get('HOST', '0.0.0.0')
+    server = ThreadingHTTPServer((host, port), AppHandler)
+    print(f'Server ativo em http://{host}:{port}')
     server.serve_forever()
 
 
