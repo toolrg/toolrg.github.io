@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111827" />
+    <meta name="description" content="Monitor de disponibilidade de vagas com notificações do navegador." />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20260909-1" />
+    <title>Monitor de Vagas</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow" style="display: none;">Monitor</p>
+
+          <div style="display: flex;flex-direction: row;gap:10px;align-items: center;margin-top:5px;">
+            <img src="https://apstatic.prodam.am.gov.br/images/logo_governo/brasao-gov.png" height="50" alt="">
+            <p style="opacity:0.7">Agendamento para Emissão de Carteira de Identidade Civil</p>
+          </div>  
+        </div>
+
+        <div class="topbar-actions">
+          <button id="startButton" class="button primary" type="button">Iniciar monitor</button>
+          <button id="stopButton" class="button secondary" type="button">Parar</button>
+          <button id="installButton" class="button ghost hidden" type="button">Instalar app</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="panel status-panel">
+          <p class="label">Status atual</p>
+          <div id="statusBadge" class="status-badge unknown">Aguardando</div>
+          <p id="lastCheckText" class="muted">Ainda não houve verificação.</p>
+        </section>
+
+        <section class="panel controls-panel">
+          <div class="field-group">
+            <label for="urlInput">URL de monitoramento</label>
+            <input id="urlInput" type="url" value="https://amcin.e-instituto.com.br/agendamento/Agendamento/LoadAgendamentoDisponivel" />
+          </div>
+
+          <div class="field-group">
+            <label for="intervalInput">Intervalo</label>
+            <select id="intervalInput">
+              <option value="30000">30 segundos</option>
+              <option value="60000" selected>1 minuto</option>
+              <option value="120000">2 minutos</option>
+              <option value="300000">5 minutos</option>
+            </select>
+          </div>
+
+          <div class="actions hidden">
+            <button id="startButtonFallback" class="button primary" type="button">Iniciar monitor</button>
+            <button id="stopButtonFallback" class="button secondary" type="button">Parar</button>
+          </div>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="section-header">
+            <h2>Resultado da checagem</h2>
+            <button id="checkNowButton" class="button link" type="button">Checar agora</button>
+          </div>
+          <ul id="resultList" class="result-list" aria-live="polite"></ul>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast hidden" aria-live="polite"></div>
+
+    <script src="app.js?v=20260909-1"></script>
+  </body>
+</html>

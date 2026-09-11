@@ -1,0 +1,17 @@
+{
+  "name": "Monitor de Vagas",
+  "short_name": "Vagas",
+  "description": "App para monitorar disponibilidade do agendamento e emitir notificações do navegador.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0b1120",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
