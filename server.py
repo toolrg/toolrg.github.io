@@ -1,5 +1,6 @@
 import html
 import os
+import re
 import sys
 import traceback
 import urllib.parse
@@ -9,6 +10,37 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_URL = 'https://amcin.e-instituto.com.br/agendamento/Agendamento/LoadAgendamentoDisponivel'
+
+
+def extract_real_link_from_browser_html(html_content):
+    if not html_content or not isinstance(html_content, str):
+        return None
+
+    patterns = [
+        r"abrirNovoCadastro\s*\(\s*['\"`]+([^'\"`]+)['\"`]+\s*\)",
+        r"document\.location\s*=\s*['\"`]+([^'\"`]+)['\"`]+",
+        r"window\.location(?:\.href)?\s*=\s*['\"`]+([^'\"`]+)['\"`]+",
+        r"location\.href\s*=\s*['\"`]+([^'\"`]+)['\"`]+",
+    ]
+
+    for pattern in patterns:
+        matches = __import__('re').finditer(pattern, html_content, __import__('re').IGNORECASE)
+        for match in matches:
+            candidate = match.group(1)
+            if not candidate:
+                continue
+
+            if 'amcin.e-instituto.com.br' not in candidate and not candidate.startswith('/'):
+                continue
+
+            url = candidate.strip()
+            if url.startswith('/'):
+                url = 'https://amcin.e-instituto.com.br' + url
+
+            if url.startswith('https://amcin.e-instituto.com.br'):
+                return url
+
+    return None
 
 
 class AppHandler(SimpleHTTPRequestHandler):

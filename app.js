@@ -105,6 +105,40 @@ function resolveRealLink(rawLink) {
   }
 }
 
+function extractBrowserGeneratedLinksFromHtml(html) {
+  if (!html || typeof html !== 'string') {
+    return [];
+  }
+
+  const patterns = [
+    /abrirNovoCadastro\s*\(\s*['"`]+([^'"`]+)['"`]+\s*\)/gi,
+    /document\.location\s*=\s*['"`]+([^'"`]+)['"`]+/gi,
+    /window\.location(?:\.href)?\s*=\s*['"`]+([^'"`]+)['"`]+/gi,
+    /location\.href\s*=\s*['"`]+([^'"`]+)['"`]+/gi,
+  ];
+
+  const links = [];
+  const seen = new Set();
+
+  patterns.forEach((pattern) => {
+    const matches = html.matchAll(pattern);
+    for (const match of matches) {
+      const candidate = match[1];
+      if (!candidate) {
+        continue;
+      }
+
+      const resolved = resolveRealLink(candidate);
+      if (resolved && !seen.has(resolved)) {
+        links.push(resolved);
+        seen.add(resolved);
+      }
+    }
+  });
+
+  return links;
+}
+
 function extractRowLink(row) {
   const sourceCandidates = [
     row?.querySelector('a[href]')?.getAttribute('href'),
@@ -137,8 +171,9 @@ function parseAvailabilityHtml(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const rows = Array.from(doc.querySelectorAll('table tr'));
   const parsed = [];
+  const browserLinks = extractBrowserGeneratedLinksFromHtml(html);
 
-  rows.forEach((row) => {
+  rows.forEach((row, index) => {
     const cells = Array.from(row.querySelectorAll('td')).map((cell) => normalizeText(cell.textContent));
 
     if (cells.length < 3) {
@@ -152,7 +187,10 @@ function parseAvailabilityHtml(html) {
       return;
     }
 
-    const link = extractRowLink(row);
+    let link = extractRowLink(row);
+    if (!link && browserLinks.length > 0) {
+      link = browserLinks[index % browserLinks.length] || browserLinks[0];
+    }
 
     parsed.push({
       local,
