@@ -297,12 +297,12 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 16px;
   background: linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.96));
-  padding: 14px 16px;
+  padding: 10px;
 }
 
 .result-item strong {
   display: block;
-  margin-bottom: 6px;
+  /*margin-bottom: 6px;*/
   font-size: 1rem;
 }
 
