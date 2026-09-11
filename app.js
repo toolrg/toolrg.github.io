@@ -284,6 +284,13 @@ function renderRows(rows) {
     const item = document.createElement('li');
     item.className = 'result-item';
 
+    const isPositive = isPositiveAvailability(row.availability);
+    if (isPositive) {
+      item.classList.add('item-positive');
+    } else {
+      item.classList.add('item-neutral');
+    }
+
     if (row.link) {
       item.classList.add('clickable');
       item.title = 'Abrir agendamento real';
@@ -299,11 +306,17 @@ function renderRows(rows) {
     const title = document.createElement('strong');
     title.textContent = row.local;
 
-    const meta = document.createElement('small');
-    meta.textContent = `${row.period} • ${row.availability}`;
+    const meta = document.createElement('div');
+    meta.className = 'result-period';
+    meta.textContent = row.period;
+
+    const badge = document.createElement('div');
+    badge.className = 'result-status';
+    badge.textContent = isPositive ? 'Disponível' : 'Sem vagas';
 
     item.appendChild(title);
     item.appendChild(meta);
+    item.appendChild(badge);
     resultList.appendChild(item);
   });
 }
