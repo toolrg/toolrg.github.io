@@ -67,6 +67,60 @@ function isPositiveAvailability(value) {
   return positivePattern.test(text) && !negativePattern.test(text);
 }
 
+function resolveRealLink(rawLink) {
+  if (!rawLink || typeof rawLink !== 'string') {
+    return null;
+  }
+
+  const trimmed = rawLink.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const isAllowedHost = /^https?:\/\/amcin\.e-instituto\.com\.br\//i.test(trimmed)
+    || /^\//.test(trimmed)
+    || !/^https?:\/\//i.test(trimmed);
+
+  if (!isAllowedHost) {
+    return null;
+  }
+
+  try {
+    if (/^https?:\/\//i.test(trimmed)) {
+      const url = new URL(trimmed);
+      if (url.hostname !== 'amcin.e-instituto.com.br') {
+        return null;
+      }
+      return url.href;
+    }
+
+    const url = new URL(trimmed, 'https://amcin.e-instituto.com.br');
+    if (url.hostname !== 'amcin.e-instituto.com.br') {
+      return null;
+    }
+    return url.href;
+  } catch (error) {
+    console.warn('Link real inválido descartado:', trimmed, error);
+    return null;
+  }
+}
+
+function extractRowLink(row) {
+  const directLink = row?.querySelector('a[href]')?.getAttribute('href')
+    || row?.getAttribute('data-link')
+    || row?.getAttribute('data-url');
+
+  if (directLink) {
+    return resolveRealLink(directLink);
+  }
+
+  const onclick = row?.getAttribute('onclick') || '';
+  const match = onclick.match(/abrirNovoCadastro\s*\(\s*['"]([^'"]+)['"]\s*\)|document\.location\s*=\s*['"]([^'"]+)['"]/i);
+
+  const candidate = match ? (match[1] || match[2]) : null;
+  return candidate ? resolveRealLink(candidate) : null;
+}
+
 function parseAvailabilityHtml(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const rows = Array.from(doc.querySelectorAll('table tr'));
@@ -86,10 +140,13 @@ function parseAvailabilityHtml(html) {
       return;
     }
 
+    const link = extractRowLink(row);
+
     parsed.push({
       local,
       period,
       availability,
+      link,
     });
   });
 
@@ -176,6 +233,16 @@ function renderRows(rows) {
   rows.forEach((row) => {
     const item = document.createElement('li');
     item.className = 'result-item';
+
+    if (row.link) {
+      item.classList.add('clickable');
+      item.title = 'Abrir agendamento real';
+      item.addEventListener('click', () => {
+        if (row.link) {
+          window.location.assign(row.link);
+        }
+      });
+    }
 
     const title = document.createElement('strong');
     title.textContent = row.local;
