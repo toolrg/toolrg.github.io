@@ -1,4 +1,5 @@
 import html
+import json
 import os
 import re
 import sys
@@ -11,6 +12,38 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_URL = 'https://amcin.e-instituto.com.br/agendamento/Agendamento/LoadAgendamentoDisponivel'
+
+LAST_DIAGNOSTIC = {
+    "ok": False, "target": DEFAULT_URL, "status": None, "final_url": None,
+    "content_type": None, "content_length": 0, "tables": 0, "rows": 0,
+    "cells": 0, "links": 0, "browser_generated_links": 0,
+    "available_words": 0, "unavailable_words": 0, "title": "",
+    "response_preview": "", "error": None,
+}
+
+def inspect_upstream_payload(payload):
+    decoded = payload.decode("utf-8", errors="replace")
+    tables = len(re.findall(r"<table\b", decoded, re.I))
+    rows = len(re.findall(r"<tr\b", decoded, re.I))
+    cells = len(re.findall(r"<td\b", decoded, re.I))
+    links = len(re.findall(r"<a\b[^>]*href\s*=", decoded, re.I))
+    browser_links = sum(len(re.findall(p, decoded, re.I)) for p in (
+        r"abrirNovoCadastro\s*\(", r"document\.location",
+        r"window\.location", r"location\.href"))
+    available_words = len(re.findall(r"vagas?\s+dispon[ií]veis?|dispon[ií]vel", decoded, re.I))
+    unavailable_words = len(re.findall(
+        r"n[aã]o\s+h[aá]\s+vagas?\s+dispon[ií]veis?|sem\s+vagas|indispon[ií]vel|vagas?\s+indispon[ií]veis?",
+        decoded, re.I))
+    m = re.search(r"<title[^>]*>(.*?)</title>", decoded, re.I | re.S)
+    title = re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+    preview = re.sub(r"\s+", " ", decoded[:1200]).strip()
+    return {
+        "tables": tables, "rows": rows, "cells": cells, "links": links,
+        "browser_generated_links": browser_links,
+        "available_words": available_words, "unavailable_words": unavailable_words,
+        "title": title, "response_preview": preview,
+    }
+
 
 
 class BrowserLinkHTMLParser(HTMLParser):
@@ -97,7 +130,18 @@ class AppHandler(SimpleHTTPRequestHandler):
         if parsed.path == '/api/check':
             self.handle_proxy()
             return
-        if parsed.path in ('', '/'):
+        if parsed.path == '/api/debug':
+            self.handle_debug()
+            return
+        if parsed.path in ('', '/', '/health'):
+            if parsed.path == '/health':
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self._send_cors_headers()
+                self.send_header('Content-Length', str(len(b'{"status":"ok"}')))
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok"}')
+                return
             self.serve_index()
             return
         super().do_GET()
@@ -116,6 +160,16 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_response(204)
         self._send_cors_headers()
         self.end_headers()
+
+    def handle_debug(self):
+        body = json.dumps(LAST_DIAGNOSTIC, ensure_ascii=False, indent=2).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self._send_cors_headers()
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def serve_index(self, head_only=False):
         index_path = ROOT / 'index.html'
@@ -149,28 +203,59 @@ class AppHandler(SimpleHTTPRequestHandler):
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Accept-Encoding': 'gzip, deflate, br',
                     'Referer': 'https://amcin.e-instituto.com.br/agendamento/Agendamento/LoadAgendamentoDisponivel',
                     'Origin': 'https://amcin.e-instituto.com.br',
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Dest': 'document',
                     'Upgrade-Insecure-Requests': '1',
-                    'Connection': 'keep-alive',
                 },
             )
             with urllib.request.urlopen(request, timeout=20) as response:
                 payload = response.read()
                 content_type = response.headers.get_content_type() or 'text/html'
+                inspected = inspect_upstream_payload(payload)
+
+                LAST_DIAGNOSTIC.clear()
+                LAST_DIAGNOSTIC.update({
+                    "ok": True,
+                    "target": target,
+                    "status": response.status,
+                    "final_url": response.geturl(),
+                    "content_type": content_type,
+                    "content_length": len(payload),
+                    "error": None,
+                    **inspected,
+                })
+
+                print(
+                    "[UPSTREAM] "
+                    f"status={response.status} final_url={response.geturl()!r} "
+                    f"type={content_type!r} bytes={len(payload)} "
+                    f"tables={inspected['tables']} rows={inspected['rows']} "
+                    f"cells={inspected['cells']} links={inspected['links']} "
+                    f"browser_links={inspected['browser_generated_links']} "
+                    f"available={inspected['available_words']} "
+                    f"unavailable={inspected['unavailable_words']} "
+                    f"title={inspected['title']!r}",
+                    file=sys.stderr, flush=True
+                )
+
                 self.send_response(response.status)
                 self.send_header('Content-Type', f'{content_type}; charset=utf-8')
                 self._send_cors_headers()
+                self.send_header('Cache-Control', 'no-store')
                 self.send_header('Content-Length', str(len(payload)))
                 self.end_headers()
                 if not head_only:
                     self.wfile.write(payload)
                 return
         except Exception as error:
+            LAST_DIAGNOSTIC.clear()
+            LAST_DIAGNOSTIC.update({
+                "ok": False, "target": target, "status": None, "final_url": None,
+                "content_type": None, "content_length": 0, "tables": 0, "rows": 0,
+                "cells": 0, "links": 0, "browser_generated_links": 0,
+                "available_words": 0, "unavailable_words": 0, "title": "",
+                "response_preview": "", "error": f"{type(error).__name__}: {error}",
+            })
             print(f'Proxy upstream failure for {target}: {type(error).__name__}: {error}', file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             body = (
