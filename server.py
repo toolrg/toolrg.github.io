@@ -1,3 +1,5 @@
+import gzip
+import http.cookiejar
 import html
 import json
 import os
@@ -6,44 +8,58 @@ import sys
 import traceback
 import urllib.parse
 import urllib.request
+import zlib
 from html.parser import HTMLParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_URL = 'https://amcin.e-instituto.com.br/agendamento/Agendamento/LoadAgendamentoDisponivel'
+SESSION_COOKIE_JAR = http.cookiejar.CookieJar()
+OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(SESSION_COOKIE_JAR))
 
-LAST_DIAGNOSTIC = {
-    "ok": False, "target": DEFAULT_URL, "status": None, "final_url": None,
-    "content_type": None, "content_length": 0, "tables": 0, "rows": 0,
-    "cells": 0, "links": 0, "browser_generated_links": 0,
-    "available_words": 0, "unavailable_words": 0, "title": "",
-    "response_preview": "", "error": None,
-}
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:  # pragma: no cover
+    sync_playwright = None
 
-def inspect_upstream_payload(payload):
-    decoded = payload.decode("utf-8", errors="replace")
-    tables = len(re.findall(r"<table\b", decoded, re.I))
-    rows = len(re.findall(r"<tr\b", decoded, re.I))
-    cells = len(re.findall(r"<td\b", decoded, re.I))
-    links = len(re.findall(r"<a\b[^>]*href\s*=", decoded, re.I))
-    browser_links = sum(len(re.findall(p, decoded, re.I)) for p in (
-        r"abrirNovoCadastro\s*\(", r"document\.location",
-        r"window\.location", r"location\.href"))
-    available_words = len(re.findall(r"vagas?\s+dispon[ií]veis?|dispon[ií]vel", decoded, re.I))
-    unavailable_words = len(re.findall(
-        r"n[aã]o\s+h[aá]\s+vagas?\s+dispon[ií]veis?|sem\s+vagas|indispon[ií]vel|vagas?\s+indispon[ií]veis?",
-        decoded, re.I))
-    m = re.search(r"<title[^>]*>(.*?)</title>", decoded, re.I | re.S)
-    title = re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
-    preview = re.sub(r"\s+", " ", decoded[:1200]).strip()
+
+def decode_upstream_payload(payload: bytes, content_encoding: str | None) -> bytes:
+    if not payload:
+        return payload
+
+    encoding = (content_encoding or '').lower().strip()
+    if 'gzip' in encoding:
+        try:
+            return gzip.decompress(payload)
+        except OSError:
+            pass
+    if 'deflate' in encoding:
+        try:
+            return zlib.decompress(payload)
+        except zlib.error:
+            pass
+    return payload
+
+
+def summarize_html_response(html_content: str) -> dict:
+    text = html_content or ''
+    lowered = text.lower()
+    table_count = lowered.count('<table')
+    tr_count = lowered.count('<tr')
+    td_count = lowered.count('<td')
+    has_local = 'local' in lowered or 'posto' in lowered or 'agendamento' in lowered
+    has_status = 'dispon' in lowered or 'indispon' in lowered or 'vagas' in lowered
+    snippet = text[:800].replace('\r', ' ').replace('\n', ' ')
     return {
-        "tables": tables, "rows": rows, "cells": cells, "links": links,
-        "browser_generated_links": browser_links,
-        "available_words": available_words, "unavailable_words": unavailable_words,
-        "title": title, "response_preview": preview,
+        'has_table': '<table' in lowered,
+        'table_count': table_count,
+        'tr_count': tr_count,
+        'td_count': td_count,
+        'has_local_like_text': has_local,
+        'has_availability_text': has_status,
+        'snippet': snippet,
     }
-
 
 
 class BrowserLinkHTMLParser(HTMLParser):
@@ -130,8 +146,8 @@ class AppHandler(SimpleHTTPRequestHandler):
         if parsed.path == '/api/check':
             self.handle_proxy()
             return
-        if parsed.path == '/api/debug':
-            self.handle_debug()
+        if parsed.path == '/api/table':
+            self.handle_live_table()
             return
         if parsed.path in ('', '/', '/health'):
             if parsed.path == '/health':
@@ -161,16 +177,6 @@ class AppHandler(SimpleHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
 
-    def handle_debug(self):
-        body = json.dumps(LAST_DIAGNOSTIC, ensure_ascii=False, indent=2).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self._send_cors_headers()
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
     def serve_index(self, head_only=False):
         index_path = ROOT / 'index.html'
         try:
@@ -192,9 +198,64 @@ class AppHandler(SimpleHTTPRequestHandler):
         if not head_only:
             self.wfile.write(body)
 
+    def handle_live_table(self, head_only=False):
+        if sync_playwright is None:
+            body = b'Playwright not installed.'
+            self.send_response(500)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self._send_cors_headers()
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            if not head_only:
+                self.wfile.write(body)
+            return
+
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        target = query.get('url', [DEFAULT_URL])[0]
+
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                page = browser.new_page(viewport={'width': 1440, 'height': 1200})
+                page.goto(target, wait_until='load', timeout=120000)
+                page.wait_for_timeout(2000)
+                try:
+                    page.wait_for_selector('table tr, .table-row, tr[onclick]', timeout=20000)
+                except Exception:
+                    pass
+                markup = page.evaluate("""
+                    () => {
+                        const table = document.querySelector('table');
+                        if (table) return table.outerHTML;
+                        const container = document.querySelector('#locaisAtendimentoContainer');
+                        if (container) return container.innerHTML;
+                        return document.body.innerHTML;
+                    }
+                """)
+                browser.close()
+                body = (markup or '').encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self._send_cors_headers()
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return
+        except Exception as error:
+            body = ('<html><body><pre>' + html.escape(str(error)) + '</pre></body></html>').encode('utf-8')
+            self.send_response(502)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self._send_cors_headers()
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            if not head_only:
+                self.wfile.write(body)
+
     def handle_proxy(self, head_only=False):
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         target = query.get('url', [DEFAULT_URL])[0]
+        diagnostic_mode = query.get('diagnostic', ['0'])[0].lower() in {'1', 'true', 'yes'}
 
         try:
             request = urllib.request.Request(
@@ -203,59 +264,46 @@ class AppHandler(SimpleHTTPRequestHandler):
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'identity',
                     'Referer': 'https://amcin.e-instituto.com.br/agendamento/Agendamento/LoadAgendamentoDisponivel',
                     'Origin': 'https://amcin.e-instituto.com.br',
                     'Upgrade-Insecure-Requests': '1',
                 },
             )
-            with urllib.request.urlopen(request, timeout=20) as response:
+            with OPENER.open(request, timeout=20) as response:
                 payload = response.read()
+                encoding = response.headers.get('Content-Encoding') if hasattr(response, 'headers') else None
+                payload = decode_upstream_payload(payload, encoding)
                 content_type = response.headers.get_content_type() or 'text/html'
-                inspected = inspect_upstream_payload(payload)
+                summary = summarize_html_response(payload.decode('utf-8', errors='replace'))
 
-                LAST_DIAGNOSTIC.clear()
-                LAST_DIAGNOSTIC.update({
-                    "ok": True,
-                    "target": target,
-                    "status": response.status,
-                    "final_url": response.geturl(),
-                    "content_type": content_type,
-                    "content_length": len(payload),
-                    "error": None,
-                    **inspected,
-                })
-
-                print(
-                    "[UPSTREAM] "
-                    f"status={response.status} final_url={response.geturl()!r} "
-                    f"type={content_type!r} bytes={len(payload)} "
-                    f"tables={inspected['tables']} rows={inspected['rows']} "
-                    f"cells={inspected['cells']} links={inspected['links']} "
-                    f"browser_links={inspected['browser_generated_links']} "
-                    f"available={inspected['available_words']} "
-                    f"unavailable={inspected['unavailable_words']} "
-                    f"title={inspected['title']!r}",
-                    file=sys.stderr, flush=True
-                )
+                if diagnostic_mode:
+                    meta = {
+                        'status': response.status,
+                        'target': target,
+                        'content_type': content_type,
+                        'content_encoding': encoding,
+                        'summary': summary,
+                    }
+                    body = json.dumps(meta, ensure_ascii=False).encode('utf-8')
+                    self.send_response(response.status)
+                    self.send_header('Content-Type', 'application/json; charset=utf-8')
+                    self._send_cors_headers()
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    if not head_only:
+                        self.wfile.write(body)
+                    return
 
                 self.send_response(response.status)
                 self.send_header('Content-Type', f'{content_type}; charset=utf-8')
                 self._send_cors_headers()
-                self.send_header('Cache-Control', 'no-store')
                 self.send_header('Content-Length', str(len(payload)))
                 self.end_headers()
                 if not head_only:
                     self.wfile.write(payload)
                 return
         except Exception as error:
-            LAST_DIAGNOSTIC.clear()
-            LAST_DIAGNOSTIC.update({
-                "ok": False, "target": target, "status": None, "final_url": None,
-                "content_type": None, "content_length": 0, "tables": 0, "rows": 0,
-                "cells": 0, "links": 0, "browser_generated_links": 0,
-                "available_words": 0, "unavailable_words": 0, "title": "",
-                "response_preview": "", "error": f"{type(error).__name__}: {error}",
-            })
             print(f'Proxy upstream failure for {target}: {type(error).__name__}: {error}', file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             body = (

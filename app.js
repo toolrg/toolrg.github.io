@@ -18,6 +18,7 @@ const urlInput = document.getElementById('urlInput');
 const intervalInput = document.getElementById('intervalInput');
 const installButton = document.getElementById('installButton');
 const toast = document.getElementById('toast');
+const tablePreview = document.getElementById('tablePreview');
 
 function loadPersistedState() {
   try {
@@ -57,6 +58,23 @@ function savePersistedState() {
 
 function normalizeText(value) {
   return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isHumanVerificationGate(html) {
+  if (!html || typeof html !== 'string') {
+    return false;
+  }
+
+  const text = html.toLowerCase();
+  return /serviço temporariamente indisponível|servico temporariamente indisponivel|verificação humana|verificacao humana|cloudflare|turnstile|captcha/i.test(text);
+}
+
+function hasRealAvailabilityTable(html) {
+  if (!html || typeof html !== 'string') {
+    return false;
+  }
+
+  return /<table\s|<tbody|<tr\s|<td\s/i.test(html);
 }
 
 function isPositiveAvailability(value) {
@@ -154,10 +172,11 @@ function extractRowLink(row) {
       continue;
     }
 
-    const directMatch = candidate.match(/(?:abrirNovoCadastro|window\.location|document\.location|location\.href)\s*[:=]?\s*['"]([^'"]+)['"]/i)
-      || candidate.match(/(?:https?:\/\/amcin\.e-instituto\.com\.br[^\s'"'<>]+|\/[^\s'"'<>]*)/i);
+    const onclickMatch = candidate.match(/(?:abrirNovoCadastro|window\.location|document\.location|location\.href)\s*(?:\(\s*|[:=]\s*)['"]([^'"]+)['"]\s*\)?/i);
+    const directMatch = onclickMatch
+      || candidate.match(/(?:https?:\/\/amcin\.e-instituto\.com\.br[^\s'"<>]+|\/[^\s'"<>]*)/i);
 
-    const possibleLink = directMatch ? directMatch[1] || directMatch[0] : candidate;
+    const possibleLink = directMatch ? (onclickMatch ? onclickMatch[1] : directMatch[1] || directMatch[0]) : candidate;
     const resolved = resolveRealLink(possibleLink);
     if (resolved) {
       return resolved;
@@ -168,6 +187,10 @@ function extractRowLink(row) {
 }
 
 function parseAvailabilityHtml(html) {
+  if (isHumanVerificationGate(html)) {
+    return [];
+  }
+
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const rows = Array.from(doc.querySelectorAll('table tr'));
   const parsed = [];
@@ -240,14 +263,13 @@ function classifyRows(rows) {
 }
 
 function getDisplayRows(rows) {
-  const positiveRows = rows.filter((row) => isPositiveAvailability(row.availability));
-  return positiveRows.length > 0 ? positiveRows : rows;
+  return rows;
 }
 
 function getPositiveKey(rows) {
   return rows
     .filter((item) => isPositiveAvailability(item.availability))
-    .map((item) => `${item.local}|${item.period}|${item.availability}`)
+    .map((item) => `${item.local}|${item.period}|${item.link || item.availability}|${item.availability}`)
     .join('||');
 }
 
@@ -271,6 +293,55 @@ function showToast(message) {
   showToast.timeoutId = window.setTimeout(() => {
     toast.classList.add('hidden');
   }, 4000);
+}
+
+function renderTablePreview(rows) {
+  if (!tablePreview) {
+    return;
+  }
+
+  tablePreview.innerHTML = '';
+
+  if (!rows.length) {
+    const emptyRow = document.createElement('tr');
+    const emptyCell = document.createElement('td');
+    emptyCell.colSpan = 4;
+    emptyCell.textContent = 'Nenhuma linha de localização foi identificada na tabela.';
+    emptyRow.appendChild(emptyCell);
+    tablePreview.appendChild(emptyRow);
+    return;
+  }
+
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+
+    const localCell = document.createElement('td');
+    localCell.textContent = row.local || '—';
+
+    const periodCell = document.createElement('td');
+    periodCell.textContent = row.period || '—';
+
+    const availabilityCell = document.createElement('td');
+    availabilityCell.textContent = row.availability || '—';
+
+    const linkCell = document.createElement('td');
+    if (row.link) {
+      const link = document.createElement('a');
+      link.href = row.link;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = row.link;
+      linkCell.appendChild(link);
+    } else {
+      linkCell.textContent = 'Sem link';
+    }
+
+    tr.appendChild(localCell);
+    tr.appendChild(periodCell);
+    tr.appendChild(availabilityCell);
+    tr.appendChild(linkCell);
+    tablePreview.appendChild(tr);
+  });
 }
 
 function renderRows(rows) {
@@ -322,19 +393,18 @@ function renderRows(rows) {
 }
 
 async function requestAvailability(url) {
-  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  const renderApi = 'https://toolrg-github-io.onrender.com';
-  const localApi = 'http://127.0.0.1:5500';
-  const candidates = isLocalhost
-    ? [`${localApi}/api/check?url=${encodeURIComponent(url)}`]
-    : [
-        `${renderApi}/api/check?url=${encodeURIComponent(url)}`,
-        `${localApi}/api/check?url=${encodeURIComponent(url)}`,
-      ];
+  const currentOrigin = window.location.origin && window.location.origin !== 'null'
+    ? window.location.origin
+    : 'http://127.0.0.1:5500';
+
+  const liveTable = `${currentOrigin}/api/table?url=${encodeURIComponent(url)}`;
+  const localProxy = `${currentOrigin}/api/check?url=${encodeURIComponent(url)}`;
+  const fallbackProxy = `http://127.0.0.1:5500/api/check?url=${encodeURIComponent(url)}`;
+  const endpoints = [liveTable, localProxy, fallbackProxy];
 
   let lastError = null;
 
-  for (const endpoint of candidates) {
+  for (const endpoint of endpoints) {
     try {
       const response = await fetch(endpoint, {
         method: 'GET',
@@ -353,7 +423,7 @@ async function requestAvailability(url) {
       return await response.text();
     } catch (error) {
       lastError = error;
-      console.warn('Endpoint fallback triggered:', endpoint, error);
+      console.warn('Proxy fallback triggered:', endpoint, error);
     }
   }
 
@@ -389,13 +459,28 @@ async function checkNow() {
 
   try {
     const html = await requestAvailability(url);
+
+    if (isHumanVerificationGate(html)) {
+      renderRows([]);
+      updateStatus('unknown', 'O site está bloqueado por verificação humana / CAPTCHA. Aguarde a validação do desafio para continuar.');
+      return;
+    }
+
+    if (!hasRealAvailabilityTable(html)) {
+      renderRows([]);
+      renderTablePreview([]);
+      updateStatus('unknown', 'Resposta sem tabela de locais. O endpoint do AMCin não retornou a estrutura real da disponibilidade.');
+      return;
+    }
+
     const rows = parseAvailabilityHtml(html);
     const verdict = classifyRows(rows);
     const displayRows = getDisplayRows(rows);
     const positiveKey = getPositiveKey(rows);
 
     renderRows(displayRows);
-    updateStatus(verdict.status, `${verdict.details} • Última checagem: ${new Date().toLocaleTimeString('pt-BR')}`);
+    renderTablePreview(rows);
+    updateStatus(verdict.status, `${verdict.details} • Monitorando toda a tabela de locais • Última checagem: ${new Date().toLocaleTimeString('pt-BR')}`);
 
     if (verdict.available === true && positiveKey && state.lastPositiveKey !== positiveKey) {
       notifyUser('Vaga disponível identificada. Verifique o sistema agora.');
