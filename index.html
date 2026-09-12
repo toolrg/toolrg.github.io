@@ -7,19 +7,15 @@
     <meta name="description" content="Monitor de disponibilidade de vagas com notificações do navegador." />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260909-1" />
+    <link rel="stylesheet" href="styles.css" />
     <title>Monitor de Vagas</title>
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow" style="display: none;">Monitor</p>
-
-          <div style="display: flex;flex-direction: row;gap:10px;align-items: center;margin-top:5px;">
-            <img src="https://apstatic.prodam.am.gov.br/images/logo_governo/brasao-gov.png" height="50" alt="">
-            <p style="opacity:0.7">Agendamento para Emissão de Carteira de Identidade Civil</p>
-          </div>  
+          <p class="eyebrow">Monitor</p>
+          <h1>Disponibilidade de vagas</h1>
         </div>
 
         <div class="topbar-actions">
@@ -65,30 +61,11 @@
           </div>
           <ul id="resultList" class="result-list" aria-live="polite"></ul>
         </section>
-
-        <section class="panel results-panel">
-          <div class="section-header">
-            <h2>Tabela de locais</h2>
-          </div>
-          <div class="table-wrap">
-            <table class="availability-table">
-              <thead>
-                <tr>
-                  <th>Local</th>
-                  <th>Período</th>
-                  <th>Disponibilidade</th>
-                  <th>Link real</th>
-                </tr>
-              </thead>
-              <tbody id="tablePreview"></tbody>
-            </table>
-          </div>
-        </section>
       </main>
     </div>
 
     <div id="toast" class="toast hidden" aria-live="polite"></div>
 
-    <script src="app.js?v=20260909-1"></script>
+    <script src="app.js"></script>
   </body>
 </html>
